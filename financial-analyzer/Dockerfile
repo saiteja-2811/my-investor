@@ -5,6 +5,9 @@ RUN apt-get update && apt-get install -y libglib2.0-0 libsm6 libxrender1 libxext
 WORKDIR /app
 COPY . .
 
+# Set PYTHONPATH to include current directory (so "app" is importable)
+ENV PYTHONPATH="${PYTHONPATH}:/app"
+
 RUN pip install --no-cache-dir -r requirements.txt
 
 CMD ["streamlit", "run", "app/financial_analyzer.py", "--server.port=8501", "--server.enableCORS=false"]
