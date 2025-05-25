@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y libglib2.0-0 libsm6 libxrender1 libxext
 
 WORKDIR /app
 COPY . .
+COPY app/fonts/DejaVuSans.ttf app/fonts/DejaVuSans.ttf
 
 # Set PYTHONPATH to include current directory (so "app" is importable)
 ENV PYTHONPATH="${PYTHONPATH}:/app"
