@@ -6,9 +6,6 @@ WORKDIR /app
 COPY . .
 COPY app/fonts/DejaVuSans.ttf app/fonts/DejaVuSans.ttf
 
-# Set PYTHONPATH to include current directory (so "app" is importable)
-ENV PYTHONPATH="${PYTHONPATH}:/app"
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 CMD ["streamlit", "run", "app/financial_analyzer.py", "--server.port=8501", "--server.enableCORS=false"]
