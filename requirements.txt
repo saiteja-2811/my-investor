@@ -1,0 +1,9 @@
+streamlit
+pdfplumber
+pandas
+numpy
+matplotlib
+openpyxl
+yfinance
+fpdf2
+yahooquery
