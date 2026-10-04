@@ -7,3 +7,4 @@ openpyxl
 yfinance
 fpdf2
 yahooquery
+anthropic
