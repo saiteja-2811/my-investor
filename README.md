@@ -33,7 +33,7 @@ The scheduled run fires at 11:30 UTC Mon–Fri (~6:30–7:30 AM ET).
 
 ### Optional: per-ticker LLM summary
 
-If you add a `GEMINI_API_KEY` secret, each ticker section gets a 2–3 sentence summary of the day's material events written at the top. Default model is `gemini-2.5-flash` (free-tier friendly). Override with a `SUMMARY_MODEL` repo variable (e.g. `gemini-3.1-pro-preview` once you have higher quota).
+If you add a `GEMINI_API_KEY` secret, each ticker section gets a 2–3 sentence summary of the day's material events written at the top. Default model is `gemini-3.8-flash` (free-tier friendly). Override with a `SUMMARY_MODEL` repo variable (e.g. `gemini-3.1-pro-preview` once you have higher quota).
 
 ### Local test
 
