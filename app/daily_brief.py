@@ -305,7 +305,8 @@ def generate_summaries(sections: list[dict]) -> None:
     if not genai or not api_key:
         return
     client = genai.Client(api_key=api_key)
-    model = os.environ.get("SUMMARY_MODEL") or "gemini-2.5-pro"
+    model = (os.environ.get("SUMMARY_MODEL") or "gemini-2.5-pro").strip() or "gemini-2.5-pro"
+    print(f"[diag] gemini model resolved to {model!r}")
     for sec in sections:
         has_signal = sec.get("news") or sec.get("ai_deals") or sec.get("filings") or sec.get("earnings")
         if not has_signal:
