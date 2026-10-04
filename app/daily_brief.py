@@ -259,6 +259,11 @@ def send_email(html: str) -> None:
     password = os.environ["GMAIL_APP_PASSWORD"]
     recipient = os.environ["RECIPIENT_EMAIL"]
 
+    # Diagnostics only — never prints the actual password value.
+    print(f"[diag] GMAIL_USER length={len(user)} has_at={'@' in user} host_suffix={user.split('@')[-1] if '@' in user else 'MISSING'}")
+    print(f"[diag] GMAIL_APP_PASSWORD length={len(password)} has_spaces={' ' in password} is_alnum={password.isalnum()}")
+    print(f"[diag] RECIPIENT_EMAIL length={len(recipient)} has_at={'@' in recipient}")
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"Portfolio Brief — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
     msg["From"] = user
