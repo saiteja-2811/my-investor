@@ -305,14 +305,14 @@ def generate_summaries(sections: list[dict]) -> None:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not anthropic or not api_key:
         return
-    # anthropic SDK reads ANTHROPIC_BASE_URL automatically; passing it explicitly
-    # here is harmless and makes the dependency obvious.
-    client = anthropic.Anthropic(
-        api_key=api_key,
-        base_url=os.environ.get("ANTHROPIC_BASE_URL") or None,
-    )
+    base_url = os.environ.get("ANTHROPIC_BASE_URL") or None
+    client = anthropic.Anthropic(api_key=api_key, base_url=base_url)
     model = os.environ.get("SUMMARY_MODEL", "claude-opus-5-5")
-    for sec in sections:
+
+    # Diagnostics — never prints any portion of the key.
+    print(f"[diag] base_url={base_url!r} model={model!r} key_len={len(api_key)}")
+
+    for i, sec in enumerate(sections):
         has_signal = sec.get("news") or sec.get("ai_deals") or sec.get("filings") or sec.get("earnings")
         if not has_signal:
             sec["summary"] = "No material updates."
@@ -327,8 +327,21 @@ def generate_summaries(sections: list[dict]) -> None:
             sec["summary"] = "".join(
                 b.text for b in resp.content if b.type == "text"
             ).strip()
+            if i == 0:
+                print(f"[diag] first-ticker summary OK (len={len(sec['summary'])})")
         except Exception as e:
-            sec["errors"].append(f"summary: {e}")
+            # On the first failure, surface the full error type + any response
+            # metadata the SDK attached (status code, headers, body excerpt).
+            if i == 0:
+                print(f"[diag] first-ticker failure type={type(e).__name__}")
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                print(f"[diag] response.status_code={status}")
+                body = getattr(getattr(e, "response", None), "text", None)
+                if body:
+                    print(f"[diag] response.text[:500]={body[:500]!r}")
+                req_url = getattr(getattr(e, "request", None), "url", None)
+                print(f"[diag] request.url={req_url}")
+            sec["errors"].append(f"summary: {type(e).__name__}: {str(e)[:200]}")
 
 
 def render_html(sections: list[dict]) -> str:
