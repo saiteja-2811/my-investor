@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import smtplib
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -307,19 +309,38 @@ def generate_summaries(sections: list[dict]) -> None:
     client = genai.Client(api_key=api_key)
     model = (os.environ.get("SUMMARY_MODEL") or "gemini-3.8-flash").strip() or "gemini-3.8-flash"
     print(f"[diag] gemini model resolved to {model!r}")
-    for sec in sections:
+    for i, sec in enumerate(sections):
         has_signal = sec.get("news") or sec.get("ai_deals") or sec.get("filings") or sec.get("earnings")
         if not has_signal:
             sec["summary"] = "No material updates."
             continue
+        # Gentle pacing between calls to avoid stacking requests on the same
+        # Flash capacity window — not strictly rate-limiting, but reduces 503s.
+        if i > 0:
+            time.sleep(1.0)
+        sec["summary"] = _summary_with_retry(client, model, sec, max_attempts=4)
+
+
+def _summary_with_retry(client, model: str, sec: dict, *, max_attempts: int) -> str | None:
+    """Call Gemini with exponential backoff on transient failures (429/503/5xx)."""
+    for attempt in range(max_attempts):
         try:
             resp = client.models.generate_content(
                 model=model,
                 contents=[SUMMARY_SYSTEM, _summary_input(sec)],
             )
-            sec["summary"] = (resp.text or "").strip()
+            return (resp.text or "").strip()
         except Exception as e:
-            sec["errors"].append(f"summary: {type(e).__name__}: {str(e)[:200]}")
+            msg = str(e)
+            transient = any(code in msg for code in ("429", "500", "502", "503", "504", "UNAVAILABLE", "DEADLINE"))
+            is_last = attempt == max_attempts - 1
+            if is_last or not transient:
+                sec["errors"].append(f"summary: {type(e).__name__}: {msg[:200]}")
+                return None
+            # 2s, 4s, 8s, with jitter
+            delay = (2 ** (attempt + 1)) + random.uniform(0, 1)
+            time.sleep(delay)
+    return None
 
 
 def render_html(sections: list[dict]) -> str:
