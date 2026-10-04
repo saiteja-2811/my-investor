@@ -1,0 +1,27 @@
+name: Daily Brief
+
+on:
+  schedule:
+    # 11:30 UTC Mon-Fri (= 6:30-7:30 AM ET depending on DST)
+    - cron: "30 11 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - run: python app/daily_brief.py
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          SEC_USER_AGENT: ${{ secrets.GMAIL_USER }}
