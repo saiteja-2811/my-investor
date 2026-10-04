@@ -33,7 +33,7 @@ The scheduled run fires at 11:30 UTC Mon–Fri (~6:30–7:30 AM ET).
 
 ### Optional: per-ticker LLM summary
 
-If you add an `ANTHROPIC_API_KEY` secret, each ticker section gets a 2–3 sentence summary of the day's material events written at the top. To route through a LiteLLM-compatible proxy, also set `ANTHROPIC_BASE_URL` to the proxy URL and optionally `SUMMARY_MODEL` (repo variable, defaults to `claude-opus-5-5`).
+If you add a `GEMINI_API_KEY` secret, each ticker section gets a 2–3 sentence summary of the day's material events written at the top. Default model is `gemini-2.5-pro`; override with a `SUMMARY_MODEL` repo variable (e.g. `gemini-2.5-flash` for faster/cheaper).
 
 ### Local test
 
