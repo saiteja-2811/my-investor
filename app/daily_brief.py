@@ -270,13 +270,77 @@ def collect(ticker: str) -> dict:
 
 SUMMARY_SYSTEM = (
     "You are a terse equity analyst writing a pre-market brief. "
-    "Given a stock ticker and today's headlines, filings, and any AI-partnership "
-    "deals for it, write 2-3 sentences a long-term holder actually cares about: "
-    "material events only (deals, M&A, earnings beats/misses, guidance changes, "
-    "regulatory, management changes). Skip generic market commentary and price "
-    "movement. If nothing material happened, say exactly: \"No material updates.\" "
-    "No bullet points, no preamble, no sign-off."
+    "Given a stock ticker, today's headlines, filings, AI-partnership deals, "
+    "and excerpts from the top articles, write 2-3 sentences a long-term holder "
+    "actually cares about: material events only (deals, M&A, earnings beats/"
+    "misses, guidance changes, regulatory, management changes). Use the article "
+    "excerpts to add specifics (dollar amounts, counterparties, dates). Skip "
+    "generic market commentary and price movement. If nothing material happened, "
+    "say exactly: \"No material updates.\" No bullet points, no preamble, no sign-off."
 )
+
+ARTICLE_FETCH_TIMEOUT = 8
+ARTICLE_MAX_CHARS = 2000
+ARTICLES_PER_TICKER = 3
+
+
+def _strip_html(html: str) -> str:
+    """Very lightweight HTML -> text. Good enough for article body extraction;
+    we're not building a reader, just giving the LLM a chunk of readable prose."""
+    import re
+    html = re.sub(r"(?is)<script.*?>.*?</script>", "", html)
+    html = re.sub(r"(?is)<style.*?>.*?</style>", "", html)
+    html = re.sub(r"(?s)<[^>]+>", " ", html)
+    html = re.sub(r"&nbsp;", " ", html)
+    html = re.sub(r"&amp;", "&", html)
+    html = re.sub(r"&lt;", "<", html)
+    html = re.sub(r"&gt;", ">", html)
+    html = re.sub(r"&#39;", "'", html)
+    html = re.sub(r"&quot;", '"', html)
+    html = re.sub(r"\s+", " ", html).strip()
+    return html
+
+
+def _fetch_article(url: str) -> str | None:
+    """Fetch and strip one article. Returns None on any failure (many sites
+    block bots / 403 / require JS); callers must tolerate missing bodies."""
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; portfolio-brief/1.0)",
+            "Accept": "text/html,application/xhtml+xml",
+        })
+        with urllib.request.urlopen(req, timeout=ARTICLE_FETCH_TIMEOUT, context=_ssl_context()) as resp:
+            if resp.status != 200:
+                return None
+            # Cap raw read at 500KB to avoid pathological pages.
+            raw = resp.read(500_000)
+        text = _strip_html(raw.decode("utf-8", errors="replace"))
+        return text[:ARTICLE_MAX_CHARS] if text else None
+    except Exception:
+        return None
+
+
+def _enrich_with_articles(sec: dict) -> None:
+    """Fetch top ARTICLES_PER_TICKER article bodies and attach to the section as
+    `article_excerpts`. Prefers AI deals (more deal-specific), then news."""
+    picks: list[dict] = []
+    for n in (sec.get("ai_deals") or []):
+        if n not in picks:
+            picks.append(n)
+        if len(picks) >= ARTICLES_PER_TICKER:
+            break
+    for n in (sec.get("news") or []):
+        if len(picks) >= ARTICLES_PER_TICKER:
+            break
+        if n not in picks:
+            picks.append(n)
+    excerpts = []
+    for n in picks:
+        body = _fetch_article(n["link"])
+        if body:
+            excerpts.append({"title": n["title"], "publisher": n["publisher"], "body": body})
+    if excerpts:
+        sec["article_excerpts"] = excerpts
 
 
 def _summary_input(sec: dict) -> str:
@@ -296,6 +360,12 @@ def _summary_input(sec: dict) -> str:
         lines.append("General news headlines (last 24h):")
         for n in sec["news"][:8]:
             lines.append(f"  - [{n['publisher']}] {n['title']}")
+    if sec.get("article_excerpts"):
+        lines.append("")
+        lines.append("Article excerpts (truncated):")
+        for a in sec["article_excerpts"]:
+            lines.append(f"--- [{a['publisher']}] {a['title']} ---")
+            lines.append(a["body"])
     return "\n".join(lines)
 
 
@@ -314,6 +384,7 @@ def generate_summaries(sections: list[dict]) -> None:
         if not has_signal:
             sec["summary"] = "No material updates."
             continue
+        _enrich_with_articles(sec)
         # Gentle pacing between calls to avoid stacking requests on the same
         # Flash capacity window — not strictly rate-limiting, but reduces 503s.
         if i > 0:
