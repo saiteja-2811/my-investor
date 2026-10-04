@@ -21,9 +21,9 @@ from pathlib import Path
 import yfinance as yf
 
 try:
-    import anthropic  # optional — summaries are skipped if the SDK or key is missing
+    from google import genai  # optional — summaries are skipped if the SDK or key is missing
 except ImportError:
-    anthropic = None
+    genai = None
 
 PORTFOLIO_PATH = Path(__file__).parent / "portfolio.json"
 
@@ -298,49 +298,26 @@ def _summary_input(sec: dict) -> str:
 
 
 def generate_summaries(sections: list[dict]) -> None:
-    """Add a `summary` string to each section in place.
-    No-op if the Anthropic SDK isn't installed or ANTHROPIC_API_KEY isn't set.
-    Honors ANTHROPIC_BASE_URL (set it to a LiteLLM proxy URL to route via LiteLLM)
-    and SUMMARY_MODEL (defaults to claude-opus-5-5)."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not anthropic or not api_key:
+    """Add a `summary` string to each section in place using Gemini.
+    No-op if the google-genai SDK isn't installed or GEMINI_API_KEY isn't set.
+    Honors SUMMARY_MODEL (defaults to gemini-2.5-pro)."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not genai or not api_key:
         return
-    base_url = os.environ.get("ANTHROPIC_BASE_URL") or None
-    client = anthropic.Anthropic(api_key=api_key, base_url=base_url)
-    model = os.environ.get("SUMMARY_MODEL", "claude-opus-5-5")
-
-    # Diagnostics — never prints any portion of the key.
-    print(f"[diag] base_url={base_url!r} model={model!r} key_len={len(api_key)}")
-
-    for i, sec in enumerate(sections):
+    client = genai.Client(api_key=api_key)
+    model = os.environ.get("SUMMARY_MODEL", "gemini-2.5-pro")
+    for sec in sections:
         has_signal = sec.get("news") or sec.get("ai_deals") or sec.get("filings") or sec.get("earnings")
         if not has_signal:
             sec["summary"] = "No material updates."
             continue
         try:
-            resp = client.messages.create(
+            resp = client.models.generate_content(
                 model=model,
-                max_tokens=300,
-                system=SUMMARY_SYSTEM,
-                messages=[{"role": "user", "content": _summary_input(sec)}],
+                contents=[SUMMARY_SYSTEM, _summary_input(sec)],
             )
-            sec["summary"] = "".join(
-                b.text for b in resp.content if b.type == "text"
-            ).strip()
-            if i == 0:
-                print(f"[diag] first-ticker summary OK (len={len(sec['summary'])})")
+            sec["summary"] = (resp.text or "").strip()
         except Exception as e:
-            # On the first failure, surface the full error type + any response
-            # metadata the SDK attached (status code, headers, body excerpt).
-            if i == 0:
-                print(f"[diag] first-ticker failure type={type(e).__name__}")
-                status = getattr(getattr(e, "response", None), "status_code", None)
-                print(f"[diag] response.status_code={status}")
-                body = getattr(getattr(e, "response", None), "text", None)
-                if body:
-                    print(f"[diag] response.text[:500]={body[:500]!r}")
-                req_url = getattr(getattr(e, "request", None), "url", None)
-                print(f"[diag] request.url={req_url}")
             sec["errors"].append(f"summary: {type(e).__name__}: {str(e)[:200]}")
 
 

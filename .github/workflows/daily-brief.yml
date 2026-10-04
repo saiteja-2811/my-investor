@@ -25,9 +25,7 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           SEC_USER_AGENT: ${{ secrets.GMAIL_USER }}
-          # Optional — if ANTHROPIC_API_KEY is set, each ticker section gets a
+          # Optional — if GEMINI_API_KEY is set, each ticker section gets a
           # 2-3 sentence LLM summary of the day's news/deals/filings above it.
-          # ANTHROPIC_BASE_URL lets you route through a LiteLLM-compatible proxy.
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUMMARY_MODEL: ${{ vars.SUMMARY_MODEL }}
