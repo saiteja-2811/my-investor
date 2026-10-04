@@ -20,6 +20,11 @@ from pathlib import Path
 
 import yfinance as yf
 
+try:
+    import anthropic  # optional — summaries are skipped if the SDK or key is missing
+except ImportError:
+    anthropic = None
+
 PORTFOLIO_PATH = Path(__file__).parent / "portfolio.json"
 
 # SEC CIKs (verified against https://www.sec.gov/files/company_tickers.json).
@@ -261,6 +266,71 @@ def collect(ticker: str) -> dict:
     return result
 
 
+SUMMARY_SYSTEM = (
+    "You are a terse equity analyst writing a pre-market brief. "
+    "Given a stock ticker and today's headlines, filings, and any AI-partnership "
+    "deals for it, write 2-3 sentences a long-term holder actually cares about: "
+    "material events only (deals, M&A, earnings beats/misses, guidance changes, "
+    "regulatory, management changes). Skip generic market commentary and price "
+    "movement. If nothing material happened, say exactly: \"No material updates.\" "
+    "No bullet points, no preamble, no sign-off."
+)
+
+
+def _summary_input(sec: dict) -> str:
+    """Compact text payload sent to the LLM for one ticker."""
+    lines = [f"Ticker: {sec['ticker']}"]
+    if sec.get("earnings"):
+        lines.append(f"Earnings scheduled: {sec['earnings'].strftime('%Y-%m-%d')}")
+    if sec.get("ai_deals"):
+        lines.append("AI deal/partnership headlines (last 72h):")
+        for n in sec["ai_deals"]:
+            lines.append(f"  - [{n['publisher']}] {n['title']}")
+    if sec.get("filings"):
+        lines.append("Recent SEC filings:")
+        for f in sec["filings"]:
+            lines.append(f"  - {f['form']} on {f['date']}")
+    if sec.get("news"):
+        lines.append("General news headlines (last 24h):")
+        for n in sec["news"][:8]:
+            lines.append(f"  - [{n['publisher']}] {n['title']}")
+    return "\n".join(lines)
+
+
+def generate_summaries(sections: list[dict]) -> None:
+    """Add a `summary` string to each section in place.
+    No-op if the Anthropic SDK isn't installed or ANTHROPIC_API_KEY isn't set.
+    Honors ANTHROPIC_BASE_URL (set it to a LiteLLM proxy URL to route via LiteLLM)
+    and SUMMARY_MODEL (defaults to claude-opus-5-5)."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not anthropic or not api_key:
+        return
+    # anthropic SDK reads ANTHROPIC_BASE_URL automatically; passing it explicitly
+    # here is harmless and makes the dependency obvious.
+    client = anthropic.Anthropic(
+        api_key=api_key,
+        base_url=os.environ.get("ANTHROPIC_BASE_URL") or None,
+    )
+    model = os.environ.get("SUMMARY_MODEL", "claude-opus-5-5")
+    for sec in sections:
+        has_signal = sec.get("news") or sec.get("ai_deals") or sec.get("filings") or sec.get("earnings")
+        if not has_signal:
+            sec["summary"] = "No material updates."
+            continue
+        try:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=300,
+                system=SUMMARY_SYSTEM,
+                messages=[{"role": "user", "content": _summary_input(sec)}],
+            )
+            sec["summary"] = "".join(
+                b.text for b in resp.content if b.type == "text"
+            ).strip()
+        except Exception as e:
+            sec["errors"].append(f"summary: {e}")
+
+
 def render_html(sections: list[dict]) -> str:
     today = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
     parts = [f"""<!DOCTYPE html>
@@ -272,6 +342,13 @@ def render_html(sections: list[dict]) -> str:
     for sec in sections:
         t = sec["ticker"]
         parts.append(f'<h2 style="margin-top: 28px; color: #0a66c2;">{t}</h2>')
+
+        if sec.get("summary"):
+            parts.append(
+                '<p style="background: #f6f8fa; padding: 10px 14px; border-left: 4px solid #0a66c2; '
+                'margin: 8px 0; font-size: 14px; line-height: 1.5;">'
+                f'<strong>Today:</strong> {escape(sec["summary"])}</p>'
+            )
 
         if sec["earnings"]:
             parts.append(
@@ -352,6 +429,7 @@ def main() -> int:
 
     tickers = load_tickers()
     sections = [collect(t) for t in tickers]
+    generate_summaries(sections)
     html = render_html(sections)
 
     if args.dry_run:
