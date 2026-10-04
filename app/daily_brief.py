@@ -300,12 +300,12 @@ def _summary_input(sec: dict) -> str:
 def generate_summaries(sections: list[dict]) -> None:
     """Add a `summary` string to each section in place using Gemini.
     No-op if the google-genai SDK isn't installed or GEMINI_API_KEY isn't set.
-    Honors SUMMARY_MODEL (defaults to gemini-2.5-pro)."""
+    Honors SUMMARY_MODEL (defaults to gemini-3.1-pro-preview)."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not genai or not api_key:
         return
     client = genai.Client(api_key=api_key)
-    model = (os.environ.get("SUMMARY_MODEL") or "gemini-2.5-pro").strip() or "gemini-2.5-pro"
+    model = (os.environ.get("SUMMARY_MODEL") or "gemini-3.1-pro-preview").strip() or "gemini-3.1-pro-preview"
     print(f"[diag] gemini model resolved to {model!r}")
     for sec in sections:
         has_signal = sec.get("news") or sec.get("ai_deals") or sec.get("filings") or sec.get("earnings")
