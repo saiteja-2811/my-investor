@@ -56,6 +56,30 @@ NEWS_QUERY = {
 NEWS_LOOKBACK_HOURS = 24
 FILING_LOOKBACK_DAYS = 2
 EARNINGS_LOOKAHEAD_DAYS = 7
+DEALS_LOOKBACK_HOURS = 72  # wider window — deal announcements are rarer
+
+# Keyword clusters used to detect AI-related deal/partnership news.
+# A story counts as an "AI deal" if its title matches at least one DEAL_KEYWORD
+# AND at least one AI_KEYWORD. (We also keep stories that explicitly name a
+# major AI company via AI_COMPANY_KEYWORDS even without an AI_KEYWORD hit.)
+DEAL_KEYWORDS = (
+    "deal", "partnership", "partners with", "collaborat", "agreement",
+    "contract", "acquisition", "acquires", "to acquire", "merger",
+    "investment", "invests", "stake", "joint venture", "jv",
+    "supply agreement", "licensing", "strategic alliance",
+)
+AI_KEYWORDS = (
+    "ai ", " ai", "artificial intelligence", "generative ai", "genai",
+    "llm", "foundation model", "machine learning", "gpu", "accelerator",
+    "data center", "datacenter", "inference", "training cluster",
+)
+AI_COMPANY_KEYWORDS = (
+    "openai", "anthropic", "microsoft", "google", "alphabet", "meta",
+    "amazon", "aws", "oracle", "xai", "mistral", "cohere", "perplexity",
+    "databricks", "scale ai", "huggingface", "hugging face", "stability ai",
+    "coreweave", "lambda labs", "together ai", "cerebras", "groq",
+    "tesla", "apple", "nvidia", "amd", "arm",
+)
 
 
 def load_tickers() -> list[str]:
@@ -63,14 +87,11 @@ def load_tickers() -> list[str]:
         return json.load(f)["tickers"]
 
 
-def fetch_news(ticker: str) -> list[dict]:
-    """Query Google News RSS for the ticker and return items from the last NEWS_LOOKBACK_HOURS.
-    Yahoo's news endpoint (used by yfinance) was returning empty / broken at build time."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=NEWS_LOOKBACK_HOURS)
-    query = NEWS_QUERY.get(ticker, ticker)
+def _google_news(query: str, cutoff: datetime) -> list[dict]:
+    """Hit Google News RSS for a query, return items newer than cutoff."""
     url = (
         "https://news.google.com/rss/search?"
-        + urllib.parse.urlencode({"q": f"{query} stock", "hl": "en-US", "gl": "US", "ceid": "US:en"})
+        + urllib.parse.urlencode({"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"})
     )
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=15, context=_ssl_context()) as resp:
@@ -93,7 +114,42 @@ def fetch_news(ticker: str) -> list[dict]:
         if pub_time < cutoff:
             continue
         out.append({"title": title, "link": link, "publisher": publisher, "time": pub_time})
-    return sorted(out, key=lambda x: x["time"], reverse=True)[:10]
+    return out
+
+
+def fetch_news(ticker: str) -> list[dict]:
+    """General news for the ticker from the last NEWS_LOOKBACK_HOURS."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=NEWS_LOOKBACK_HOURS)
+    query = NEWS_QUERY.get(ticker, ticker)
+    items = _google_news(f"{query} stock", cutoff)
+    return sorted(items, key=lambda x: x["time"], reverse=True)[:10]
+
+
+def fetch_ai_deals(ticker: str) -> list[dict]:
+    """Find deal/partnership stories involving AI companies for this ticker.
+    Casts a wider net (72h) and uses a targeted query, then filters by keyword
+    presence so we don't surface generic 'AI stock' noise."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=DEALS_LOOKBACK_HOURS)
+    base = NEWS_QUERY.get(ticker, ticker)
+    # Query asks for the company name together with any one of several deal
+    # or AI-partner keywords. Google News honors OR with "|".
+    deal_query = (
+        f'{base} (deal OR partnership OR acquisition OR invest OR collaboration '
+        f'OR agreement OR OpenAI OR Anthropic OR Microsoft OR Google OR Meta '
+        f'OR Oracle OR xAI OR CoreWeave)'
+    )
+    items = _google_news(deal_query, cutoff)
+    scored = []
+    for n in items:
+        title_lower = n["title"].lower()
+        has_deal = any(k in title_lower for k in DEAL_KEYWORDS)
+        has_ai = any(k in title_lower for k in AI_KEYWORDS)
+        has_ai_co = any(k in title_lower for k in AI_COMPANY_KEYWORDS)
+        # Keep if: it's a deal-shaped headline that mentions AI or an AI company,
+        # OR it names an AI company AND some deal-shaped language.
+        if (has_deal and (has_ai or has_ai_co)) or (has_ai_co and has_deal):
+            scored.append(n)
+    return sorted(scored, key=lambda x: x["time"], reverse=True)[:5]
 
 
 def _ssl_context() -> ssl.SSLContext:
@@ -197,6 +253,11 @@ def collect(ticker: str) -> dict:
     except Exception as e:
         result["earnings"] = None
         result["errors"].append(f"earnings: {e}")
+    try:
+        result["ai_deals"] = fetch_ai_deals(ticker)
+    except Exception as e:
+        result["ai_deals"] = []
+        result["errors"].append(f"ai_deals: {e}")
     return result
 
 
@@ -205,7 +266,7 @@ def render_html(sections: list[dict]) -> str:
     parts = [f"""<!DOCTYPE html>
 <html><body style="font-family: -apple-system, Segoe UI, sans-serif; max-width: 720px; margin: auto; color: #222;">
 <h1 style="border-bottom: 2px solid #0a66c2; padding-bottom: 8px;">Portfolio Brief — {today}</h1>
-<p style="color: #555; font-size: 13px;">News from the last {NEWS_LOOKBACK_HOURS}h · SEC filings from the last {FILING_LOOKBACK_DAYS}d · Earnings within {EARNINGS_LOOKAHEAD_DAYS}d</p>
+<p style="color: #555; font-size: 13px;">News from the last {NEWS_LOOKBACK_HOURS}h · AI deals from the last {DEALS_LOOKBACK_HOURS}h · SEC filings from the last {FILING_LOOKBACK_DAYS}d · Earnings within {EARNINGS_LOOKAHEAD_DAYS}d</p>
 """]
     error_blobs = []
     for sec in sections:
@@ -217,6 +278,19 @@ def render_html(sections: list[dict]) -> str:
                 f'<p style="background: #fff8e1; padding: 8px 12px; border-left: 4px solid #f5a623; margin: 8px 0;">'
                 f'⏰ <strong>Earnings on {sec["earnings"].strftime("%a %b %d")}</strong></p>'
             )
+
+        if sec.get("ai_deals"):
+            parts.append(
+                '<p style="margin: 10px 0 4px; font-weight: 600;">🤝 Deals & AI partnerships</p>'
+                '<ul style="margin: 0 0 8px; padding-left: 20px; background: #f0f7ff; border-left: 3px solid #0a66c2; padding: 8px 8px 8px 28px;">'
+            )
+            for n in sec["ai_deals"]:
+                when = n["time"].strftime("%b %d %H:%M UTC")
+                parts.append(
+                    f'<li><a href="{escape(n["link"])}">{escape(n["title"])}</a> '
+                    f'<span style="color: #777; font-size: 12px;">— {escape(n["publisher"])} · {when}</span></li>'
+                )
+            parts.append("</ul>")
 
         if sec["filings"]:
             parts.append('<p style="margin: 10px 0 4px; font-weight: 600;">SEC filings</p><ul style="margin: 0 0 8px; padding-left: 20px;">')
@@ -238,7 +312,7 @@ def render_html(sections: list[dict]) -> str:
                 )
             parts.append("</ul>")
 
-        if not sec["earnings"] and not sec["filings"] and not sec["news"]:
+        if not sec["earnings"] and not sec["filings"] and not sec["news"] and not sec.get("ai_deals"):
             parts.append('<p style="color: #999; font-style: italic;">No updates.</p>')
 
         if sec["errors"]:
@@ -258,11 +332,6 @@ def send_email(html: str) -> None:
     user = os.environ["GMAIL_USER"]
     password = os.environ["GMAIL_APP_PASSWORD"]
     recipient = os.environ["RECIPIENT_EMAIL"]
-
-    # Diagnostics only — never prints the actual password value.
-    print(f"[diag] GMAIL_USER length={len(user)} has_at={'@' in user} host_suffix={user.split('@')[-1] if '@' in user else 'MISSING'}")
-    print(f"[diag] GMAIL_APP_PASSWORD length={len(password)} has_spaces={' ' in password} is_alnum={password.isalnum()}")
-    print(f"[diag] RECIPIENT_EMAIL length={len(recipient)} has_at={'@' in recipient}")
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"Portfolio Brief — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
